@@ -106,7 +106,7 @@ namespace 네이버카페정보수집
             //결과 구하고 출력
             var cafeList = NaverParser.GetCafes(inputMaxFindInt, inputMinMemberInt, inputRootCategoryInt, inputSubCategoryInt);
             Console.Clear();
-            Console.WriteLine("결과: ");
+            Console.WriteLine($"결과: {(cafeList.Count == 0 ? "없음" : "")}");
             for (var i = 0; i < cafeList.Count; i++)
             {
                 var cafe = cafeList[i];
@@ -124,10 +124,16 @@ namespace 네이버카페정보수집
             sb.AppendLine($"멤버 수 [{inputMinMemberInt}]명 이상인 카페들에서");
             sb.AppendLine($"최대 [{inputMaxFindInt}]개의 카페 정보를 수집한 결과입니다.");
             sb.AppendLine();
-            for (var i = 0; i < cafeList.Count; i++)
+            if (cafeList.Count > 0)
             {
-                var cafe = cafeList[i];
-                sb.AppendLine($"{i + 1}. 카페주제:{{{rootCategoryUsed}}} 카페이름:{{{cafe.cafeName}}} 카페이름영문:{{{cafe.cafeNameEng}}} 카페주소:{{{cafe.cafeUrl}}} 카페ID:{{{cafe.cafeId}}} 카페회원수:{{{cafe.memberCount}}} 카페개설일:{{{cafe.cafeOpenDate}}} 카페매니저닉네임:{{{cafe.ownerName}}} 카페매니저ID:{{{cafe.ownerId}}}");
+                for (var i = 0; i < cafeList.Count; i++)
+                {
+                    var cafe = cafeList[i];
+                    sb.AppendLine($"{i + 1}. 카페주제:{{{rootCategoryUsed}}} 카페이름:{{{cafe.cafeName}}} 카페이름영문:{{{cafe.cafeEngName}}} 카페주소:{{{cafe.cafeUrl}}} 카페ID:{{{cafe.cafeId}}} 카페회원수:{{{cafe.memberCount}}} 카페매니저닉네임:{{{cafe.ownerName}}} 카페매니저ID:{{{cafe.ownerId}}}");
+                }
+            } else
+            {
+                sb.AppendLine("없음");
             }
             var savePath = $"{Environment.CurrentDirectory}\\{Environment.TickCount}.txt";
             File.WriteAllText(savePath, sb.ToString());

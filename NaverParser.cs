@@ -11,9 +11,9 @@ namespace 네이버카페정보수집
 {
     internal static class NaverParser
     {
-        private const string getCategoriesApi = "https://section.cafe.naver.com/SectionHome.nhn?t=1";
-        private const string getSubCategoriesApi = "https://section.cafe.naver.com/SubDirectoryListAjax.nhn";
-        private const string getCafeListApi = "https://section.cafe.naver.com/SectionHomeCafeListAjax.nhn";
+        private const string getCategoriesApi = "https://section.cafe.naver.com/cafe-home-api/v2/themecafes?page=1&perPage=0&sort=membercount&type=ac&themeDir1Id=2&themeDir2Id=0";
+        private const string getSubCategoriesApi = "https://section.cafe.naver.com/cafe-home-api/v1/directories/{categoryId}/sub-directories";
+        private const string getCafeListApi = "https://section.cafe.naver.com/cafe-home-api/v2/themecafes?page={pageId}&perPage=100&sort=membercount&type=ac&themeDir1Id={categoryId}&themeDir2Id={subCategoryId}";
         private const string getCafeInfoApi = "http://cafe.naver.com/CafeProfileView.nhn"; //?clubid=14252258
 
         private static string Post(string uri, string data)
@@ -61,14 +61,14 @@ namespace 네이버카페정보수집
             var categoryList = new List<RootCategory>();
 
             var response = Get(getCategoriesApi);
-            var matches = Regex.Matches(
-                response.Replace(" id=\"theme1\"", ""),
-                "<a href=\"#\" class=\"N=a:cnt_thm\\.dir1,i:(\\d+),t:1 _click\\(CategoryCafe\\|SelectNode\\|\\d+\\) _stopDefault\">(.+)</a>");
+            var json = JObject.Parse(response);
 
-            foreach (Match match in matches)
+            var directoryArr = json["message"]["result"]["themes"];
+
+            foreach (var directory in directoryArr)
             {
-                var id = int.Parse(match.Groups[1].ToString());
-                var name = match.Groups[2].ToString();
+                var id = (int)directory["themeId"];
+                var name = (string)directory["themeName"];
 
                 categoryList.Add(new RootCategory(id, name));
             }
@@ -80,19 +80,27 @@ namespace 네이버카페정보수집
         {
             var subCategoryList = new List<SubCategory>();
 
-            var response = Post(getSubCategoriesApi, $"pid={categoryId}");
+            var response = Get(getSubCategoriesApi.Replace("{categoryId}", categoryId.ToString()));
             var json = JObject.Parse(response);
 
-            var directoryArr = json["result"][0]["directoryList"];
+            var directoryArr = json["message"]["result"]["directories"];
 
             foreach (var directory in directoryArr)
             {
-                var id = (int)directory["dirId"];
-                var cafeCount = (int)directory["cafeCount"];
-                var name = (string)directory["dirName"];
-                var parentCategoryId = (int)directory["parentDirId"];
+                var id = (int)directory["directoryId"];
+                var name = (string)directory["directoryName"];
 
-                subCategoryList.Add(new SubCategory(parentCategoryId, id, name, cafeCount));
+                var response2 = Get(
+                      getCafeListApi.Replace("{pageId}", "0")
+                                    .Replace("{perPage}", "0")
+                                    .Replace("{categoryId}", categoryId.ToString())
+                                    .Replace("{subCategoryId}", id.ToString()));
+
+                var json2 = JObject.Parse(response2);
+
+                var cafeCount = (int)json2["message"]["result"]["pageInfo"]["totalCount"];
+
+                subCategoryList.Add(new SubCategory(categoryId, id, name, cafeCount));
             }
 
             return subCategoryList;
@@ -101,11 +109,8 @@ namespace 네이버카페정보수집
         internal static List<Cafe> GetCafes(
             int maxFind,
             int minMember,
-            int dir1Id,
-            int dir2Id = 0,
-            string listType = "AC",
-            int sortType = 3,
-            int dirType = 1)
+            int categoryId,
+            int subCategoryId = 0)
         {
             var cafeList = new List<Cafe>();
 
@@ -125,20 +130,22 @@ namespace 네이버카페정보수집
                     break;
                 }
 
-                var postData =
-                    $"search.dirType={dirType}&search.dir1Id={dir1Id}&search.dir2Id={dir2Id}&search.listType={listType}&search.sortType={sortType}&search.page={page}";
-
                 string response;
                 try
                 {
-                    response = Post(getCafeListApi, postData);
+                    var apiUrl = getCafeListApi
+                        .Replace("{pageId}", page.ToString())
+                        .Replace("{categoryId}", categoryId.ToString())
+                        .Replace("{subCategoryId}", subCategoryId.ToString());
+                    Console.WriteLine(apiUrl);
+                    response = Get(apiUrl);
                 } catch
                 {
                     continue;
                 }
                 var json = JObject.Parse(response);
 
-                var cafeArr = json["result"][0]["cafeList"];
+                var cafeArr = json["message"]["result"]["cafes"];
                 if (!cafeArr.Any())
                 {
                     //페이지에 결과없으면 중지
@@ -153,7 +160,7 @@ namespace 네이버카페정보수집
                         break;
                     }
 
-                    var memberCount = (int)cafe["membercount"];
+                    var memberCount = (int)cafe["memberCount"];
 
                     if (memberCount < minMember)
                     {
@@ -163,31 +170,37 @@ namespace 네이버카페정보수집
                     }
 
                     var cafeId = (int)cafe["cafeId"];
-                    var ownerName = (string)cafe["sysopnick"];
                     string ownerId;
+                    string ownerName;
 
                     try
                     {
-                        ownerId = GetOwnerId(cafeId, ownerName);
+                        var cafeStaffInfo = GetStaffInfo(cafeId);
+                        ownerId = cafeStaffInfo.managerId;
+                        ownerName = cafeStaffInfo.managerName;
                     }
-                    catch
+                    catch/* (Exception err)*/
                     {
+                       //Console.WriteLine(err.ToString());
                        continue;
                     }
-                    
 
-                    if (cafeList.Any(x => x.ownerId == ownerId))
+
+                    if (cafeList.Any(x => x.ownerId.Equals(ownerId)))
                     {
                         continue;
                     }
 
-                    var cafeName = (string)cafe["clubname"].ToString().Replace("&quot;", "\"").Replace("&lt;","<").Replace("&gt", ">");
-                    var cafeUrl = $"http://cafe.naver.com/{cafe["cluburl"]}";
-                    var cafeNameEng = (string)cafe["cluburl"];
-                    var cafeOpenDate = (string)cafe["opendate"];
+                    var cafeName = (string)cafe["cafeName"];
+                    var cafeEngName = (string)cafe["cafeUrl"];
+                    var cafeUrl = $"http://cafe.naver.com/{cafeEngName}";
+                    var cafeNameEng = (string)cafe["cafeUrl"];
+                    var cafeIntro = (string)cafe["introduction"];
+                    var cafeCategoryId = (int)cafe["themeDir1Id"];
+                    var cafeSubCategoryName = (string)cafe["themeDir2Name"];
 
 
-                    cafeList.Add(new Cafe(cafeName, cafeNameEng, cafeUrl, cafeId, cafeOpenDate, memberCount, ownerName, ownerId));
+                    cafeList.Add(new Cafe(cafeId, cafeName, cafeUrl, cafeIntro, cafeCategoryId, cafeSubCategoryName, memberCount, ownerId, ownerName, cafeEngName));
                     done++;
 
                     Console.SetCursorPosition(0, 0);
@@ -205,13 +218,13 @@ namespace 네이버카페정보수집
             return cafeList;
         }
 
-        internal static string GetOwnerId(int cafeId, string ownerName)
+        internal static CafeStaff GetStaffInfo(int cafeId)
         {
             var response = Get($"{getCafeInfoApi}?clubid={cafeId}", "euc-kr");
             var match = Regex.Match(
                 response,
-                $"ui\\(event, '(.+)',.+,'{ownerName}',.+,.+, .+, .+, .+, .+, .+\\)");
-            return match.Groups[1].ToString();
+                $"ui\\(event, '(.+)',.+,'(.+)','\\d+','', .+, .+, .+, .+, .+\\)");
+            return new CafeStaff(match.Groups[2].Value, match.Groups[1].Value);
         }
     }
 }
